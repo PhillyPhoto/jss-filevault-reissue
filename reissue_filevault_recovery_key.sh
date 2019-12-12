@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 ###
 #
@@ -10,17 +10,20 @@
 #                   FileVault keys to JSS" configuration profile must already
 #                   be deployed in order for this script to work correctly.
 #          Author:  Elliot Jordan <elliot@elliotjordan.com>
+#       Co-Author:  Luie Lugo
 #         Created:  2015-01-05
-#   Last Modified:  2019-12-02
-#         Version:  1.9.4
+#   Last Modified:  2019-12-12
+#         Version:  1.9.4.1
 #
 ###
 
 
 ################################## VARIABLES ##################################
 
-# (Optional) Path to a logo that will be used in messaging. Recommend 512px,
-# PNG format. If no logo is provided, the FileVault icon will be used.
+# Script version
+scriptVer="1.9.4.1"
+
+# Company logo. (Tested with PNG, JPG, GIF, PDF, and AI formats.)
 LOGO=""
 
 # The title of the message that will be displayed to the user.
@@ -29,20 +32,20 @@ PROMPT_TITLE="Encryption Key Escrow"
 
 # The body of the message that will be displayed before prompting the user for
 # their password. All message strings below can be multiple lines.
-PROMPT_MESSAGE="Your Mac's FileVault encryption key needs to be escrowed by PretendCo IT.
+PROMPT_MESSAGE="Your Mac's FileVault encryption key needs to be escrowed by Pretendco IT.
 
 Click the Next button below, then enter your Mac's password when prompted."
 
 # The body of the message that will be displayed after 5 incorrect passwords.
 FORGOT_PW_MESSAGE="You made five incorrect password attempts.
 
-Please contact the Help Desk at 555-1212 for help with your Mac password."
+Please contact the Help Desk at 888-555-1234 for help with your Mac password."
 
 # The body of the message that will be displayed after successful completion.
 SUCCESS_MESSAGE="Thank you! Your FileVault key has been escrowed."
 
 # The body of the message that will be displayed if a failure occurs.
-FAIL_MESSAGE="Sorry, an error occurred while escrowing your FileVault key. Please contact the Help Desk at 555-1212 for help."
+FAIL_MESSAGE="Sorry, an error occurred while escrowing your FileVault key. Please contact the Help Desk at 888-555-1234 for help."
 
 # Optional but recommended: The profile identifiers of the FileVault Key
 # Redirection profiles (e.g. ABCDEF12-3456-7890-ABCD-EF1234567890).
@@ -53,6 +56,56 @@ PROFILE_IDENTIFIER_10_13="" # 10.13 and later
 ###############################################################################
 ######################### DO NOT EDIT BELOW THIS LINE #########################
 ###############################################################################
+
+################################## LOG FILE ###################################
+
+# Check for the log file, and write to it
+if [ -e "/Library/Logs/FileVaultReissueKey.log" ]
+then
+    chmod 777 "/Library/Logs/FileVaultReissueKey.log"
+    logFile="/Library/Logs/FileVaultReissueKey.log"
+else
+    cat > "/Library/Logs/FileVaultReissueKey.log" &
+    cat "/Library/Logs/FileVaultReissueKey.log"
+    chmod 777 "/Library/Logs/FileVaultReissueKey.log"
+    if [ -e "/Library/Logs/FileVaultReissueKey.log" ]
+    then
+        logFile="/Library/Logs/FileVaultReissueKey.log"
+    else
+        logFile="/var/log/jamf.log"
+    fi
+fi
+
+############################### ECHO FUNCTION #################################
+
+echoFunc ()
+{
+    # Date and Time function for the log file
+    fDateTime () { echo $(date +"%a %b %d %T"); }
+    # Title for begining of line in log file
+    Title="FileVaultReissueKey: "
+    # Header string function
+    fHeader () { echo "$(fDateTime) $(scutil --get LocalHostName) $Title" ; }
+    # Echo out, first to the log file, then to the terminal (so running it locally will be seen)
+    echo $(fHeader) "$1" >> $logFile
+    echo $(fHeader) "$1"
+}
+
+############################### EXIT FUNCTION #################################
+
+exitFunc () {
+    case $1 in
+        0) exitCode="0 - Script Completed Successfully";;
+        1) exitCode="1 - Script failed, exit code: $2";;
+        *) exitCode="$1";;
+    esac
+    echoFunc "Exit code: $exitCode"
+    echoFunc "======================== Script Complete ========================"
+    exit $1
+}
+
+echoFunc "======================== Starting Script ========================"
+echoFunc "Script Version: $scriptVer"
 
 
 ######################## VALIDATION AND ERROR CHECKING ########################
@@ -94,7 +147,7 @@ if [[ "$OS_MAJOR" -ne 10 || "$OS_MINOR" -lt 9 ]]; then
     REASON="This script requires macOS 10.9 or higher. This Mac has $(sw_vers -productVersion)."
     BAILOUT=true
 elif [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -ge 15 ]]; then
-    echo "[WARNING] This script is not yet supported on macOS Catalina. Use at your own risk."
+    echoFunc "[WARNING] This script has limited support on macOS Catalina. Use at your own risk."
 fi
 
 # Check to see if the encryption process is complete
@@ -127,6 +180,8 @@ else
 fi
 
 # If specified, the FileVault key redirection profile needs to be installed.
+# macOS 10.15 Catalina requires the case insensitive "i" parameter to be
+# passed with grep to actually find the profile.
 if [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -le 12 ]]; then
     if [[ "$PROFILE_IDENTIFIER_10_12" != "" ]]; then
         if ! /usr/bin/profiles -Cv | grep -q "profileIdentifier: $PROFILE_IDENTIFIER_10_12"; then
@@ -134,9 +189,16 @@ if [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -le 12 ]]; then
             BAILOUT=true
         fi
     fi
-elif [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -gt 12 ]]; then
+elif [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -ge 13 && "$OS_MINOR" -le 14 ]]; then
     if [[ "$PROFILE_IDENTIFIER_10_13" != "" ]]; then
         if ! /usr/bin/profiles -Cv | grep -q "profileIdentifier: $PROFILE_IDENTIFIER_10_13"; then
+            REASON="The FileVault Key Redirection profile is not yet installed."
+            BAILOUT=true
+        fi
+    fi
+elif [[ "$OS_MAJOR" -eq 10 && "$OS_MINOR" -ge 15 ]]; then
+    if [[ "$PROFILE_IDENTIFIER_10_13" != "" ]]; then
+        if ! /usr/bin/profiles -Cv | grep -qi "profileIdentifier: $PROFILE_IDENTIFIER_10_13"; then
             REASON="The FileVault Key Redirection profile is not yet installed."
             BAILOUT=true
         fi
@@ -153,7 +215,7 @@ if [[ -z "$LOGO" ]] || [[ ! -f "$LOGO" ]]; then
     LOGO="/System/Library/PreferencePanes/Security.prefPane/Contents/Resources/FileVault.icns"
 fi
 
-# Convert POSIX path of logo icon to Mac path for AppleScript.
+# Convert POSIX path of logo icon to Mac path for AppleScript
 LOGO_POSIX="$(/usr/bin/osascript -e 'tell application "System Events" to return POSIX file "'"$LOGO"'" as text')"
 
 # Get information necessary to display messages in the current user's context.
@@ -168,40 +230,40 @@ fi
 
 # If any error occurred in the validation section, bail out.
 if [[ "$BAILOUT" == "true" ]]; then
-    echo "[ERROR]: $REASON"
+    echoFunc "[ERROR]: $REASON"
     launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$FAIL_MESSAGE: $REASON" -button1 'OK' -defaultButton 1 -startlaunchd &>/dev/null &
     exit 1
 fi
 
 # Display a branded prompt explaining the password prompt.
-echo "Alerting user $CURRENT_USER about incoming password prompt..."
+echoFunc "Alerting user $CURRENT_USER about incoming password prompt..."
 /bin/launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$PROMPT_MESSAGE" -button1 "Next" -defaultButton 1 -startlaunchd &>/dev/null
 
 # Get the logged in user's password via a prompt.
-echo "Prompting $CURRENT_USER for their Mac password..."
+echoFunc "Prompting $CURRENT_USER for their Mac password..."
 USER_PASS="$(/bin/launchctl "$L_METHOD" "$L_ID" /usr/bin/osascript -e 'display dialog "Please enter the password you use to log in to your Mac:" default answer "" with title "'"${PROMPT_TITLE//\"/\\\"}"'" giving up after 86400 with text buttons {"OK"} default button 1 with hidden answer with icon file "'"${LOGO_POSIX//\"/\\\"}"'"' -e 'return text returned of result')"
 
 # Thanks to James Barclay (@futureimperfect) for this password validation loop.
 TRY=1
 until /usr/bin/dscl /Search -authonly "$CURRENT_USER" "$USER_PASS" &>/dev/null; do
     (( TRY++ ))
-    echo "Prompting $CURRENT_USER for their Mac password (attempt $TRY)..."
+    echoFunc "Prompting $CURRENT_USER for their Mac password (attempt $TRY)..."
     USER_PASS="$(/bin/launchctl "$L_METHOD" "$L_ID" /usr/bin/osascript -e 'display dialog "Sorry, that password was incorrect. Please try again:" default answer "" with title "'"${PROMPT_TITLE//\"/\\\"}"'" giving up after 86400 with text buttons {"OK"} default button 1 with hidden answer with icon file "'"${LOGO_POSIX//\"/\\\"}"'"' -e 'return text returned of result')"
     if (( TRY >= 5 )); then
-        echo "[ERROR] Password prompt unsuccessful after 5 attempts. Displaying \"forgot password\" message..."
+        echoFunc "[ERROR] Password prompt unsuccessful after 5 attempts. Displaying \"forgot password\" message..."
         /bin/launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$FORGOT_PW_MESSAGE" -button1 'OK' -defaultButton 1 -startlaunchd &>/dev/null &
         exit 1
     fi
 done
-echo "Successfully prompted for Mac password."
+echoFunc "Successfully prompted for Mac password."
 
 # If needed, unload and kill FDERecoveryAgent.
 if /bin/launchctl list | grep -q "com.apple.security.FDERecoveryAgent"; then
-    echo "Unloading FDERecoveryAgent LaunchDaemon..."
+    echoFunc "Unloading FDERecoveryAgent LaunchDaemon..."
     /bin/launchctl unload /System/Library/LaunchDaemons/com.apple.security.FDERecoveryAgent.plist
 fi
 if pgrep -q "FDERecoveryAgent"; then
-    echo "Stopping FDERecoveryAgent process..."
+    echoFunc "Stopping FDERecoveryAgent process..."
     killall "FDERecoveryAgent"
 fi
 
@@ -214,15 +276,15 @@ USER_PASS=${USER_PASS//\'/&apos;}
 
 # For 10.13's escrow process, store the last modification time of /var/db/FileVaultPRK.dat
 if [[ "$OS_MINOR" -ge 13 ]]; then
-    echo "Checking for /var/db/FileVaultPRK.dat on macOS 10.13+..."
+    echoFunc "Checking for /var/db/FileVaultPRK.dat on macOS 10.13+..."
     PRK_MOD=0
     if [ -e "/var/db/FileVaultPRK.dat" ]; then
-        echo "Found existing personal recovery key."
+        echoFunc "Found existing personal recovery key."
         PRK_MOD=$(/usr/bin/stat -f "%Sm" -t "%s" "/var/db/FileVaultPRK.dat")
     fi
 fi
 
-echo "Issuing new recovery key..."
+echoFunc "Issuing new recovery key..."
 FDESETUP_OUTPUT="$(/usr/bin/fdesetup changerecovery -norecoverykey -verbose -personal -inputplist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -251,9 +313,10 @@ if [[ "$OS_MINOR" -ge 13 ]]; then
         NEW_PRK_MOD=$(/usr/bin/stat -f "%Sm" -t "%s" "/var/db/FileVaultPRK.dat")
         if [[ $NEW_PRK_MOD -gt $PRK_MOD ]]; then
             ESCROW_STATUS=0
-            echo "Recovery key updated locally and available for collection via MDM. (This usually requires two 'jamf recon' runs to show as valid.)"
+
+            echoFunc "Recovery key updated locally and available for collection via MDM. (This usually requires two 'jamf recon' runs to show as valid.)"
         else
-            echo "[WARNING] The recovery key does not appear to have been updated locally."
+            echoFunc "[WARNING] The recovery key does not appear to have been updated locally."
         fi
     fi
 else
@@ -263,21 +326,25 @@ else
 fi
 
 if [[ $FDESETUP_RESULT -ne 0 ]]; then
-    [[ -n "$FDESETUP_OUTPUT" ]] && echo "$FDESETUP_OUTPUT"
-    echo "[WARNING] fdesetup exited with return code: $FDESETUP_RESULT."
-    echo "See this page for a list of fdesetup exit codes and their meaning:"
-    echo "https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man8/fdesetup.8.html"
-    echo "Displaying \"failure\" message..."
+    [[ -n "$FDESETUP_OUTPUT" ]] && echoFunc "$FDESETUP_OUTPUT"
+    echoFunc "[WARNING] fdesetup exited with return code: $FDESETUP_RESULT."
+    echoFunc "See this page for a list of fdesetup exit codes and their meaning:"
+    echoFunc "https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man8/fdesetup.8.html"
+    echoFunc "Displaying \"failure\" message..."
     /bin/launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$FAIL_MESSAGE: fdesetup exited with code $FDESETUP_RESULT. Output: $FDESETUP_OUTPUT" -button1 'OK' -defaultButton 1 -startlaunchd &>/dev/null &
 elif [[ $ESCROW_STATUS -ne 0 ]]; then
-    [[ -n "$FDESETUP_OUTPUT" ]] && echo "$FDESETUP_OUTPUT"
-    echo "[WARNING] FileVault key was generated, but escrow cannot be confirmed. Please verify that the redirection profile is installed and the Mac is connected to the internet."
-    echo "Displaying \"failure\" message..."
+    [[ -n "$FDESETUP_OUTPUT" ]] && echoFunc "$FDESETUP_OUTPUT"
+    echoFunc "[WARNING] FileVault key was generated, but escrow cannot be confirmed. Please verify that the redirection profile is installed and the Mac is connected to the internet."
+    echoFunc "Displaying \"failure\" message..."
     /bin/launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$FAIL_MESSAGE: New key generated, but escrow did not occur." -button1 'OK' -defaultButton 1 -startlaunchd &>/dev/null &
 else
-    [[ -n "$FDESETUP_OUTPUT" ]] && echo "$FDESETUP_OUTPUT"
-    echo "Displaying \"success\" message..."
+    [[ -n "$FDESETUP_OUTPUT" ]] && echoFunc "$FDESETUP_OUTPUT"
+	echoFunc "Running Jamf Recon twice"
+    /usr/local/bin/jamf recon
+    sleep 60
+    /usr/local/bin/jamf recon
+    echoFunc "Displaying \"success\" message..."
     /bin/launchctl "$L_METHOD" "$L_ID" "$jamfHelper" -windowType "utility" -icon "$LOGO" -title "$PROMPT_TITLE" -description "$SUCCESS_MESSAGE" -button1 'OK' -defaultButton 1 -startlaunchd &>/dev/null &
 fi
 
-exit $FDESETUP_RESULT
+exitFunc $FDESETUP_RESULT
